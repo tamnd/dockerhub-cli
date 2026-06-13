@@ -1,0 +1,10 @@
+title       = "dhub"
+baseURL     = "https://dockerhub-cli.tamnd.com/"
+description = "Browse Docker Hub container images"
+contentDir  = "content"
+outputDir   = "public"
+theme       = "tago-doks"
+syntaxHighlight = "true"
+
+[params]
+github = "https://github.com/tamnd/dockerhub-cli"
