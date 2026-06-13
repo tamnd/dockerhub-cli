@@ -64,30 +64,16 @@ type Client struct {
 	last       time.Time
 }
 
-// NewClient returns a Client. An optional Config may be provided to override
-// defaults; if none is given, DefaultConfig is used.
-func NewClient(cfgs ...Config) *Client {
-	cfg := DefaultConfig()
-	if len(cfgs) > 0 {
-		c := cfgs[0]
-		if c.BaseURL != "" {
-			cfg.BaseURL = c.BaseURL
-		}
-		if c.UserAgent != "" {
-			cfg.UserAgent = c.UserAgent
-		}
-		if c.Rate != 0 {
-			cfg.Rate = c.Rate
-		}
-		if c.Retries != 0 {
-			cfg.Retries = c.Retries
-		}
-		if c.Workers != 0 {
-			cfg.Workers = c.Workers
-		}
-		if c.Timeout != 0 {
-			cfg.Timeout = c.Timeout
-		}
+// NewClient returns a Client configured with cfg.
+func NewClient(cfg Config) *Client {
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "https://hub.docker.com/v2"
+	}
+	if cfg.UserAgent == "" {
+		cfg.UserAgent = DefaultUserAgent
+	}
+	if cfg.Timeout == 0 {
+		cfg.Timeout = 30 * time.Second
 	}
 	return &Client{
 		baseURL:    cfg.BaseURL,
