@@ -118,7 +118,7 @@ func splitImageName(name string) (namespace, repo string) {
 // imageURL returns the canonical Docker Hub URL for an image.
 func imageURL(namespace, repo string) string {
 	if namespace == "library" {
-		return fmt.Sprintf("https://hub.docker.com/_%s/%s", "/", repo)
+		return fmt.Sprintf("https://hub.docker.com/_/%s", repo)
 	}
 	return fmt.Sprintf("https://hub.docker.com/r/%s/%s", namespace, repo)
 }
