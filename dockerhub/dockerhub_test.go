@@ -10,20 +10,29 @@ import (
 	"time"
 )
 
+func newTestClient(t *testing.T, mux *http.ServeMux) *Client {
+	t.Helper()
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+	cfg := DefaultConfig()
+	cfg.BaseURL = ts.URL
+	cfg.Rate = 0
+	return NewClient(cfg)
+}
+
 func TestGetSendsUserAgent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("User-Agent") == "" {
 			t.Error("request carried no User-Agent")
 		}
 		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
+	})
 
-	c := NewClient()
-	c.Rate = 0
+	c := newTestClient(t, mux)
 	c.httpClient = &http.Client{Timeout: 5 * time.Second}
 
-	body, err := c.Get(context.Background(), srv.URL)
+	body, err := c.Get(context.Background(), c.baseURL+"/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,23 +43,22 @@ func TestGetSendsUserAgent(t *testing.T) {
 
 func TestGetRetriesOn503(t *testing.T) {
 	var hits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		hits++
 		if hits < 3 {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer srv.Close()
+	})
 
-	c := NewClient()
-	c.Rate = 0
+	c := newTestClient(t, mux)
 	c.Retries = 5
 	c.httpClient = &http.Client{Timeout: 10 * time.Second}
 
 	start := time.Now()
-	body, err := c.Get(context.Background(), srv.URL)
+	body, err := c.Get(context.Background(), c.baseURL+"/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,14 +97,23 @@ func TestSearchParsesResults(t *testing.T) {
 	}
 	data, _ := json.Marshal(payload)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search/repositories/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(data)
-	}))
-	defer srv.Close()
-	_ = srv
+	})
 
-	e1 := searchEntryToImage(payload.Results[0], 1)
+	c := newTestClient(t, mux)
+
+	images, err := c.Search(context.Background(), "nginx", 10, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) != 2 {
+		t.Fatalf("got %d images, want 2", len(images))
+	}
+
+	e1 := images[0]
 	if e1.Name != "nginx" {
 		t.Errorf("name = %q, want nginx", e1.Name)
 	}
@@ -113,7 +130,7 @@ func TestSearchParsesResults(t *testing.T) {
 		t.Errorf("updated = %q, want 2024-01-15", e1.Updated)
 	}
 
-	e2 := searchEntryToImage(payload.Results[1], 2)
+	e2 := images[1]
 	if e2.Name != "bitnami/nginx" {
 		t.Errorf("name = %q, want bitnami/nginx", e2.Name)
 	}
@@ -134,8 +151,26 @@ func TestTagsParsesResults(t *testing.T) {
 			{OS: "linux", Architecture: "arm64"},
 		},
 	}
+	payload := tagsResp{Count: 1, Results: []tagEntry{entry}}
+	data, _ := json.Marshal(payload)
 
-	tag := tagEntryToTag(entry)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repositories/library/nginx/tags/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
+	})
+
+	c := newTestClient(t, mux)
+
+	tags, err := c.Tags(context.Background(), "nginx", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tags) != 1 {
+		t.Fatalf("got %d tags, want 1", len(tags))
+	}
+
+	tag := tags[0]
 	if tag.Name != "latest" {
 		t.Errorf("name = %q, want latest", tag.Name)
 	}
@@ -157,17 +192,16 @@ func TestTagsParsesResults(t *testing.T) {
 }
 
 func TestImageNotFound(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"message": "Object not found"}`))
-	}))
-	defer srv.Close()
+	})
 
-	c := NewClient()
-	c.Rate = 0
+	c := newTestClient(t, mux)
 	c.httpClient = &http.Client{Timeout: 5 * time.Second}
 
-	_, err := c.Get(context.Background(), srv.URL)
+	_, err := c.Get(context.Background(), c.baseURL+"/")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v, want ErrNotFound", err)
 	}

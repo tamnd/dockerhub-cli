@@ -108,7 +108,7 @@ func (a *App) setup() error {
 	if !Format(a.output).Valid() {
 		return codeError(exitUsage, fmt.Errorf("unknown output format %q", a.output))
 	}
-	a.client = dockerhub.NewClientWithConfig(a.cfg)
+	a.client = dockerhub.NewClient(a.cfg)
 	return nil
 }
 

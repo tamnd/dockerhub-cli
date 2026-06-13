@@ -19,35 +19,15 @@ import (
 	"time"
 )
 
-const (
-	hubBase = "https://hub.docker.com/v2"
-)
-
 // DefaultUserAgent identifies the client to Docker Hub.
 const DefaultUserAgent = "dhub/dev (+https://github.com/tamnd/dockerhub-cli)"
 
 // ErrNotFound is returned when the API returns 404 for a repo or namespace.
 var ErrNotFound = errors.New("not found")
 
-// Client talks to the Docker Hub v2 API.
-// Public fields may be set after construction to override defaults.
-type Client struct {
-	// Rate is the minimum time between requests. Zero means no pacing.
-	Rate time.Duration
-	// Retries is the number of additional attempts on transient errors.
-	Retries int
-	// Workers is the maximum number of concurrent requests.
-	Workers int
-	// UserAgent overrides the default User-Agent header.
-	UserAgent string
-
-	httpClient *http.Client
-	mu         sync.Mutex
-	last       time.Time
-}
-
-// Config holds optional constructor parameters for NewClientWithConfig.
+// Config holds constructor parameters for NewClient.
 type Config struct {
+	BaseURL   string
 	UserAgent string
 	Rate      time.Duration
 	Retries   int
@@ -58,6 +38,7 @@ type Config struct {
 // DefaultConfig returns sensible defaults.
 func DefaultConfig() Config {
 	return Config{
+		BaseURL:   "https://hub.docker.com/v2",
 		UserAgent: DefaultUserAgent,
 		Rate:      100 * time.Millisecond,
 		Retries:   3,
@@ -66,27 +47,50 @@ func DefaultConfig() Config {
 	}
 }
 
-// NewClient returns a Client with default settings.
-func NewClient() *Client {
-	cfg := DefaultConfig()
-	return &Client{
-		httpClient: &http.Client{Timeout: cfg.Timeout},
-		UserAgent:  cfg.UserAgent,
-		Rate:       cfg.Rate,
-		Retries:    cfg.Retries,
-		Workers:    cfg.Workers,
-	}
+// Client talks to the Docker Hub v2 API.
+type Client struct {
+	// Rate is the minimum time between requests. Zero means no pacing.
+	Rate time.Duration
+	// Retries is the number of additional attempts on transient errors.
+	Retries int
+	// Workers is the maximum number of concurrent requests.
+	Workers int
+	// UserAgent overrides the default User-Agent header.
+	UserAgent string
+
+	baseURL    string
+	httpClient *http.Client
+	mu         sync.Mutex
+	last       time.Time
 }
 
-// NewClientWithConfig returns a Client configured with cfg.
-func NewClientWithConfig(cfg Config) *Client {
-	if cfg.UserAgent == "" {
-		cfg.UserAgent = DefaultUserAgent
-	}
-	if cfg.Timeout == 0 {
-		cfg.Timeout = 30 * time.Second
+// NewClient returns a Client. An optional Config may be provided to override
+// defaults; if none is given, DefaultConfig is used.
+func NewClient(cfgs ...Config) *Client {
+	cfg := DefaultConfig()
+	if len(cfgs) > 0 {
+		c := cfgs[0]
+		if c.BaseURL != "" {
+			cfg.BaseURL = c.BaseURL
+		}
+		if c.UserAgent != "" {
+			cfg.UserAgent = c.UserAgent
+		}
+		if c.Rate != 0 {
+			cfg.Rate = c.Rate
+		}
+		if c.Retries != 0 {
+			cfg.Retries = c.Retries
+		}
+		if c.Workers != 0 {
+			cfg.Workers = c.Workers
+		}
+		if c.Timeout != 0 {
+			cfg.Timeout = c.Timeout
+		}
 	}
 	return &Client{
+		baseURL:    cfg.BaseURL,
 		httpClient: &http.Client{Timeout: cfg.Timeout},
 		UserAgent:  cfg.UserAgent,
 		Rate:       cfg.Rate,
@@ -210,7 +214,7 @@ func (c *Client) Search(ctx context.Context, query string, limit int, onlyOffici
 	page := 1
 	for {
 		params.Set("page", strconv.Itoa(page))
-		rawURL := hubBase + "/search/repositories/?" + params.Encode()
+		rawURL := c.baseURL + "/search/repositories/?" + params.Encode()
 		var resp searchResp
 		if err := c.getJSON(ctx, rawURL, &resp); err != nil {
 			return out, err
@@ -239,7 +243,7 @@ func (c *Client) Search(ctx context.Context, query string, limit int, onlyOffici
 // name can be "nginx" (official) or "user/repo".
 func (c *Client) ImageDetail(ctx context.Context, name string) (Image, error) {
 	namespace, repo := splitImageName(name)
-	rawURL := fmt.Sprintf("%s/repositories/%s/%s/", hubBase, url.PathEscape(namespace), url.PathEscape(repo))
+	rawURL := fmt.Sprintf("%s/repositories/%s/%s/", c.baseURL, url.PathEscape(namespace), url.PathEscape(repo))
 	var resp repoResp
 	if err := c.getJSON(ctx, rawURL, &resp); err != nil {
 		return Image{}, fmt.Errorf("image %q: %w", name, err)
@@ -267,7 +271,7 @@ func (c *Client) Tags(ctx context.Context, name string, limit int) ([]Tag, error
 	for {
 		params.Set("page", strconv.Itoa(page))
 		rawURL := fmt.Sprintf("%s/repositories/%s/%s/tags/?%s",
-			hubBase, url.PathEscape(namespace), url.PathEscape(repo), params.Encode())
+			c.baseURL, url.PathEscape(namespace), url.PathEscape(repo), params.Encode())
 		var resp tagsResp
 		if err := c.getJSON(ctx, rawURL, &resp); err != nil {
 			return out, fmt.Errorf("tags %q: %w", name, err)
@@ -300,7 +304,7 @@ func (c *Client) Official(ctx context.Context, limit int) ([]Image, error) {
 	page := 1
 	for {
 		params.Set("page", strconv.Itoa(page))
-		rawURL := hubBase + "/repositories/library/?" + params.Encode()
+		rawURL := c.baseURL + "/repositories/library/?" + params.Encode()
 		var resp reposResp
 		if err := c.getJSON(ctx, rawURL, &resp); err != nil {
 			return out, err
@@ -339,7 +343,7 @@ func (c *Client) UserRepos(ctx context.Context, username string, limit int) ([]I
 	page := 1
 	for {
 		params.Set("page", strconv.Itoa(page))
-		rawURL := fmt.Sprintf("%s/repositories/%s/?%s", hubBase, url.PathEscape(username), params.Encode())
+		rawURL := fmt.Sprintf("%s/repositories/%s/?%s", c.baseURL, url.PathEscape(username), params.Encode())
 		var resp reposResp
 		if err := c.getJSON(ctx, rawURL, &resp); err != nil {
 			return out, fmt.Errorf("user %q: %w", username, err)
