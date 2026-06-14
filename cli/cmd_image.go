@@ -7,8 +7,9 @@ import (
 
 func (a *App) imageCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "image <name>",
-		Short: "Show metadata for a Docker Hub image",
+		Use:     "image <name>",
+		Aliases: []string{"info"},
+		Short:   "Show metadata for a Docker Hub image",
 		Long: `Show metadata for a single Docker Hub image.
 
 name can be a plain image name like "nginx" (official) or "user/repo".`,
